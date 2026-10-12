@@ -482,3 +482,64 @@ def test_shutdown_drain_failure_remains_failed_and_retryable(monkeypatch):
         SimulationRunner._cleanup_done = False
         SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
         SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_monitor_publishes_completion_while_env_waits_for_commands(
+    monkeypatch, tmp_path
+):
+    simulation_id = "sim-wait"
+    twitter_dir = tmp_path / simulation_id / "twitter"
+    twitter_dir.mkdir(parents=True)
+    (twitter_dir / "actions.jsonl").write_text(
+        '{"event_type":"simulation_end","total_rounds":1,"total_actions":0}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        SimulationRunner,
+        "_sync_simulation_status",
+        classmethod(lambda *_args, **_kwargs: None),
+    )
+    stopped = []
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "stop_updater",
+        classmethod(lambda _cls, sim_id: stopped.append(sim_id)),
+    )
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "get_updater",
+        classmethod(lambda _cls, _sim_id: None),
+    )
+    state = SimulationRunState(
+        simulation_id=simulation_id,
+        runner_status=RunnerStatus.RUNNING,
+        twitter_running=True,
+    )
+    completed_while_alive = []
+
+    class WaitingProcess:
+        """Stays alive in wait-for-commands mode until completion is published."""
+
+        returncode = None
+
+        def poll(self):
+            if state.runner_status == RunnerStatus.COMPLETED:
+                completed_while_alive.append(True)
+                self.returncode = 0
+            return self.returncode
+
+    SimulationRunner._run_states[simulation_id] = state
+    SimulationRunner._processes[simulation_id] = WaitingProcess()
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        SimulationRunner._monitor_simulation(simulation_id, "en")
+    finally:
+        SimulationRunner._run_states.pop(simulation_id, None)
+        SimulationRunner._processes.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+    assert completed_while_alive
+    assert state.runner_status == RunnerStatus.COMPLETED
+    assert stopped == [simulation_id]

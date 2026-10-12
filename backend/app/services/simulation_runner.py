@@ -637,6 +637,7 @@ class SimulationRunner:
         
         monitor_error: Exception | None = None
         exit_code: int | None = None
+        finalized_while_waiting = False
         try:
             while process.poll() is None:  # 进程仍在运行
                 # 读取 Twitter 动作日志
@@ -653,6 +654,26 @@ class SimulationRunner:
                 
                 # 更新状态
                 cls._save_run_state(state)
+
+                # After both platforms finish, the script stays alive in
+                # wait-for-commands mode (interviews for the report and Step 5)
+                # and may never exit. Publish completion once ingestion drains.
+                if (
+                    not finalized_while_waiting
+                    and state.runner_status == RunnerStatus.RUNNING
+                    and cls._check_all_platforms_completed(state)
+                ):
+                    with cls._finalization_lock(simulation_id):
+                        latest_state = cls.get_run_state(simulation_id)
+                        if (
+                            latest_state is not None
+                            and latest_state.runner_status == RunnerStatus.RUNNING
+                        ):
+                            cls._finalize_run(
+                                simulation_id, state, sim_dir, 0, None
+                            )
+                            finalized_while_waiting = True
+                        state = cls.get_run_state(simulation_id) or state
                 time.sleep(2)
             
             # 进程结束后，最后读取一次日志
@@ -672,76 +693,10 @@ class SimulationRunner:
             # exit. Serialize terminal state and updater drain so only one path
             # owns the final result.
             with cls._finalization_lock(simulation_id):
-                latest_state = cls.get_run_state(simulation_id)
-                if latest_state is not None:
-                    state = latest_state
-
-                if state.runner_status not in {
-                    RunnerStatus.STOPPED,
-                    RunnerStatus.FAILED,
-                }:
-                    manual_stop = simulation_id in cls._manual_stop_requests
-                    desired_status = (
-                        RunnerStatus.STOPPED
-                        if manual_stop
-                        else RunnerStatus.COMPLETED
+                if not finalized_while_waiting:
+                    cls._finalize_run(
+                        simulation_id, state, sim_dir, exit_code, monitor_error
                     )
-                    error_message = None
-                    if not manual_stop and monitor_error is not None:
-                        desired_status = RunnerStatus.FAILED
-                        error_message = str(monitor_error)
-                    elif not manual_stop and exit_code != 0:
-                        desired_status = RunnerStatus.FAILED
-                        main_log_path = os.path.join(sim_dir, "simulation.log")
-                        error_info = ""
-                        try:
-                            if os.path.exists(main_log_path):
-                                with open(main_log_path, 'r', encoding='utf-8') as f:
-                                    error_info = f.read()[-2000:]
-                        except Exception:
-                            pass
-                        error_message = (
-                            f"进程退出码: {exit_code}, 错误: {error_info}"
-                        )
-
-                    state.twitter_running = False
-                    state.reddit_running = False
-
-                    if cls._graph_memory_enabled.get(simulation_id, False):
-                        # STOPPING is a non-terminal ingestion barrier. The UI
-                        # and report API must not observe COMPLETED until every
-                        # accepted episode is processed by Zep Cloud.
-                        state.runner_status = RunnerStatus.STOPPING
-                        cls._save_run_state(state)
-                        cls._sync_simulation_status(
-                            simulation_id,
-                            RunnerStatus.STOPPING,
-                        )
-                        try:
-                            ZepGraphMemoryManager.stop_updater(simulation_id)
-                            cls._graph_memory_enabled.pop(simulation_id, None)
-                            logger.info(
-                                "已停止图谱记忆更新: simulation_id=%s",
-                                simulation_id,
-                            )
-                        except Exception as error:
-                            logger.error(f"停止图谱记忆更新器失败: {error}")
-                            desired_status = RunnerStatus.FAILED
-                            error_message = f"Zep图谱写入未完整完成: {error}"
-
-                    state.runner_status = desired_status
-                    state.error = error_message
-                    state.completed_at = datetime.now().isoformat()
-                    cls._save_run_state(state)
-                    cls._sync_simulation_status(
-                        simulation_id,
-                        desired_status,
-                        error_message,
-                    )
-                    if desired_status == RunnerStatus.COMPLETED:
-                        logger.info(f"模拟完成: {simulation_id}")
-                    else:
-                        logger.error(f"模拟失败: {simulation_id}, error={state.error}")
                 cls._manual_stop_requests.discard(simulation_id)
             
             # 清理进程资源
@@ -763,6 +718,90 @@ class SimulationRunner:
                     pass
                 cls._stderr_files.pop(simulation_id, None)
     
+    @classmethod
+    def _finalize_run(
+        cls,
+        simulation_id: str,
+        state: "SimulationRunState",
+        sim_dir: str,
+        exit_code: int | None,
+        monitor_error: Exception | None,
+    ) -> None:
+        """Publish the terminal status after draining Zep ingestion.
+
+        Callers must hold ``_finalization_lock(simulation_id)``.
+        """
+        latest_state = cls.get_run_state(simulation_id)
+        if latest_state is not None:
+            state = latest_state
+
+        if state.runner_status not in {
+            RunnerStatus.STOPPED,
+            RunnerStatus.FAILED,
+        }:
+            manual_stop = simulation_id in cls._manual_stop_requests
+            desired_status = (
+                RunnerStatus.STOPPED
+                if manual_stop
+                else RunnerStatus.COMPLETED
+            )
+            error_message = None
+            if not manual_stop and monitor_error is not None:
+                desired_status = RunnerStatus.FAILED
+                error_message = str(monitor_error)
+            elif not manual_stop and exit_code != 0:
+                desired_status = RunnerStatus.FAILED
+                main_log_path = os.path.join(sim_dir, "simulation.log")
+                error_info = ""
+                try:
+                    if os.path.exists(main_log_path):
+                        with open(main_log_path, 'r', encoding='utf-8') as f:
+                            error_info = f.read()[-2000:]
+                except Exception:
+                    pass
+                error_message = (
+                    f"进程退出码: {exit_code}, 错误: {error_info}"
+                )
+
+            state.twitter_running = False
+            state.reddit_running = False
+
+            if cls._graph_memory_enabled.get(simulation_id, False):
+                # STOPPING is a non-terminal ingestion barrier. The UI
+                # and report API must not observe COMPLETED until every
+                # accepted episode is processed by Zep Cloud.
+                state.runner_status = RunnerStatus.STOPPING
+                cls._save_run_state(state)
+                cls._sync_simulation_status(
+                    simulation_id,
+                    RunnerStatus.STOPPING,
+                )
+                try:
+                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                    cls._graph_memory_enabled.pop(simulation_id, None)
+                    logger.info(
+                        "已停止图谱记忆更新: simulation_id=%s",
+                        simulation_id,
+                    )
+                except Exception as error:
+                    logger.error(f"停止图谱记忆更新器失败: {error}")
+                    desired_status = RunnerStatus.FAILED
+                    error_message = f"Zep图谱写入未完整完成: {error}"
+
+            state.runner_status = desired_status
+            state.error = error_message
+            state.completed_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+            cls._sync_simulation_status(
+                simulation_id,
+                desired_status,
+                error_message,
+            )
+            if desired_status == RunnerStatus.COMPLETED:
+                logger.info(f"模拟完成: {simulation_id}")
+            else:
+                logger.error(f"模拟失败: {simulation_id}, error={state.error}")
+
     @classmethod
     def _read_action_log(
         cls, 
