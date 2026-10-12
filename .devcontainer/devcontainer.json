@@ -1,0 +1,25 @@
+{
+  "name": "MiroFish",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  "secrets": {
+    "LLM_API_KEY": { "description": "API key del modello linguistico (qualunque servizio compatibile OpenAI)" },
+    "LLM_BASE_URL": { "description": "Base URL, es. https://api.openai.com/v1 oppure https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    "LLM_MODEL_NAME": { "description": "Nome del modello, es. gpt-4o-mini oppure qwen-plus" },
+    "ZEP_API_KEY": { "description": "API key di Zep Cloud (https://app.getzep.com/)" }
+  },
+  "containerEnv": {
+    "VITE_API_BASE_URL": "",
+    "BROWSER": "none"
+  },
+  "forwardPorts": [3000, 5001],
+  "portsAttributes": {
+    "3000": { "label": "MiroFish UI", "onAutoForward": "openBrowser" },
+    "5001": { "label": "MiroFish API", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "pipx install uv && npm run setup:all",
+  "postAttachCommand": "npm run dev"
+}
