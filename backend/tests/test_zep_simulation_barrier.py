@@ -543,3 +543,25 @@ def test_monitor_publishes_completion_while_env_waits_for_commands(
     assert completed_while_alive
     assert state.runner_status == RunnerStatus.COMPLETED
     assert stopped == [simulation_id]
+
+
+def test_run_state_without_process_or_updater_is_orphaned(monkeypatch):
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager,
+        "get_updater",
+        classmethod(lambda _cls, _sim_id: None),
+    )
+    state = SimulationRunState(
+        simulation_id="sim-orphan",
+        runner_status=RunnerStatus.RUNNING,
+    )
+    SimulationRunner._processes.pop("sim-orphan", None)
+    SimulationRunner._monitor_threads.pop("sim-orphan", None)
+
+    assert SimulationRunner._is_orphaned_run_state(state) is True
+
+    SimulationRunner._processes["sim-orphan"] = object()
+    try:
+        assert SimulationRunner._is_orphaned_run_state(state) is False
+    finally:
+        SimulationRunner._processes.pop("sim-orphan", None)

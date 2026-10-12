@@ -432,6 +432,22 @@ class SimulationRunner:
                 RunnerStatus.STOPPING,
             }
             if (
+                existing
+                and existing.runner_status in active_statuses
+                and cls._is_orphaned_run_state(existing)
+            ):
+                # A backend restart leaves the persisted state "running" with
+                # no process or monitor owning it; it would block restarts
+                # forever. Stop any leftover process and allow a fresh start.
+                logger.warning(
+                    "Discarding orphaned run state after backend restart: "
+                    "simulation_id=%s status=%s",
+                    simulation_id,
+                    existing.runner_status.value,
+                )
+                cls._terminate_orphaned_process(existing.process_pid)
+                existing = None
+            if (
                 existing and existing.runner_status in active_statuses
             ) or ZepGraphMemoryManager.get_updater(simulation_id) is not None:
                 raise ValueError(f"模拟已在运行或结束处理中: {simulation_id}")
@@ -718,6 +734,28 @@ class SimulationRunner:
                     pass
                 cls._stderr_files.pop(simulation_id, None)
     
+    @classmethod
+    def _is_orphaned_run_state(cls, state: "SimulationRunState") -> bool:
+        """True when no process, monitor or Zep updater in this server owns the state."""
+        simulation_id = state.simulation_id
+        return (
+            simulation_id not in cls._processes
+            and simulation_id not in cls._monitor_threads
+            and ZepGraphMemoryManager.get_updater(simulation_id) is None
+        )
+
+    @staticmethod
+    def _terminate_orphaned_process(pid: Optional[int]) -> None:
+        """Best-effort stop of a simulation process left by a previous server."""
+        if not pid or IS_WINDOWS:
+            return
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        except Exception as error:
+            logger.warning(f"Failed to stop orphaned simulation process {pid}: {error}")
+
     @classmethod
     def _finalize_run(
         cls,
