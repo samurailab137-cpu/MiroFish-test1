@@ -42,7 +42,7 @@ def create_chat_completion(
     Compatibility strategy:
     - For GPT-5 family, avoid sending temperature by default.
     - For Claude models, avoid sending temperature (recent models reject values below 1)
-      and always send max_tokens (required by Anthropic).
+      and always send max_tokens (required by Anthropic); omit response_format.
     - For token limit, use `max_completion_tokens` on GPT-5, `max_tokens` otherwise.
     - Preserve the legacy request shape for every non-GPT-5 model/provider.
     - Propagate provider errors unchanged instead of guessing from message text.
@@ -52,11 +52,13 @@ def create_chat_completion(
         "messages": messages,
     }
 
-    if response_format is not None:
-        kwargs["response_format"] = response_format
-
     gpt5_family = is_gpt5_family(model)
     claude_family = is_claude_family(model)
+
+    # Anthropic's endpoint rejects response_format {"type": "json_object"};
+    # Claude follows the prompt's JSON instructions instead.
+    if response_format is not None and not claude_family:
+        kwargs["response_format"] = response_format
 
     if claude_family and max_tokens is None:
         max_tokens = CLAUDE_DEFAULT_MAX_TOKENS

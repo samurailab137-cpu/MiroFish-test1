@@ -154,3 +154,18 @@ def test_claude_gets_default_max_tokens_when_unset():
 
     assert recorder.calls[0]["max_tokens"] == 16000
     assert "temperature" not in recorder.calls[0]
+
+
+def test_claude_omits_json_object_response_format():
+    recorder = CompletionRecorder()
+    messages = [{"role": "user", "content": "hello"}]
+
+    create_chat_completion(
+        client_for(recorder),
+        model="claude-haiku-5-5",
+        messages=messages,
+        max_tokens=100,
+        response_format={"type": "json_object"},
+    )
+
+    assert "response_format" not in recorder.calls[0]
