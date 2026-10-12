@@ -688,10 +688,35 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
+// Reopening or reloading this step must not wipe a run that is still in
+// progress or already finished: attach to it and only start when there is
+// nothing to resume.
+const RESUMABLE_STATUSES = new Set(['starting', 'running', 'paused', 'stopping', 'completed'])
+
+const resumeOrStartSimulation = async () => {
+  try {
+    const res = await getRunStatus(props.simulationId)
+    const data = res?.success ? res.data : null
+    if (data && RESUMABLE_STATUSES.has(data.runner_status) && !data.orphaned) {
+      addLog(t('log.simResumed'))
+      phase.value = 1
+      runStatus.value = data
+      fetchRunStatusDetail()
+      fetchRunStatus()
+      startStatusPolling()
+      startDetailPolling()
+      return
+    }
+  } catch (err) {
+    console.warn('获取运行状态失败:', err)
+  }
+  doStartSimulation()
+}
+
 onMounted(() => {
   addLog(t('log.step3Init'))
   if (props.simulationId) {
-    doStartSimulation()
+    resumeOrStartSimulation()
   }
 })
 

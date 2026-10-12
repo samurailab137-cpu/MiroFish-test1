@@ -1906,9 +1906,21 @@ def get_run_status(simulation_id: str):
                 }
             })
         
+        data = run_state.to_dict()
+        # A state left "active" by a previous backend process has no owner;
+        # the UI restarts it instead of attaching to a run that cannot progress.
+        data["orphaned"] = (
+            run_state.runner_status in {
+                RunnerStatus.STARTING,
+                RunnerStatus.RUNNING,
+                RunnerStatus.PAUSED,
+                RunnerStatus.STOPPING,
+            }
+            and SimulationRunner._is_orphaned_run_state(run_state)
+        )
         return jsonify({
             "success": True,
-            "data": run_state.to_dict()
+            "data": data
         })
         
     except Exception as e:
