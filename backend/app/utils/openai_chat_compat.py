@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+# Anthropic's OpenAI-compatible endpoint requires an explicit output limit.
+CLAUDE_DEFAULT_MAX_TOKENS = 16000
+
 
 def is_gpt5_family(model: Optional[str]) -> bool:
     """Return True when model belongs to GPT-5 family aliases/snapshots."""
@@ -38,7 +41,8 @@ def create_chat_completion(
 
     Compatibility strategy:
     - For GPT-5 family, avoid sending temperature by default.
-    - For Claude models, avoid sending temperature (recent models reject values below 1).
+    - For Claude models, avoid sending temperature (recent models reject values below 1)
+      and always send max_tokens (required by Anthropic).
     - For token limit, use `max_completion_tokens` on GPT-5, `max_tokens` otherwise.
     - Preserve the legacy request shape for every non-GPT-5 model/provider.
     - Propagate provider errors unchanged instead of guessing from message text.
@@ -52,8 +56,12 @@ def create_chat_completion(
         kwargs["response_format"] = response_format
 
     gpt5_family = is_gpt5_family(model)
+    claude_family = is_claude_family(model)
 
-    if temperature is not None and not gpt5_family and not is_claude_family(model):
+    if claude_family and max_tokens is None:
+        max_tokens = CLAUDE_DEFAULT_MAX_TOKENS
+
+    if temperature is not None and not gpt5_family and not claude_family:
         kwargs["temperature"] = temperature
 
     if max_tokens is not None:

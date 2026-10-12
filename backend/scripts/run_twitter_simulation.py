@@ -454,9 +454,16 @@ class TwitterSimulationRunner:
         
         print(f"LLM配置: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
         
+        # Claude (Anthropic OpenAI-compatible endpoint) requires max_tokens
+        model_config_dict = None
+        if llm_model and llm_model.strip().lower().startswith("claude"):
+            from camel.configs import ChatGPTConfig
+            model_config_dict = ChatGPTConfig(max_tokens=4096).as_dict()
+
         return ModelFactory.create(
             model_platform=ModelPlatformType.OPENAI,
             model_type=llm_model,
+            model_config_dict=model_config_dict,
         )
     
     def _get_active_agents_for_round(

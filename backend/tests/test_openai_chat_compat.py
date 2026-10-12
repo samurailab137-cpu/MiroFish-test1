@@ -138,3 +138,19 @@ def test_claude_omits_temperature_but_keeps_max_tokens():
     assert recorder.calls == [
         {"model": "claude-sonnet-5-5", "messages": messages, "max_tokens": 456}
     ]
+
+
+def test_claude_gets_default_max_tokens_when_unset():
+    recorder = CompletionRecorder()
+    messages = [{"role": "user", "content": "hello"}]
+
+    create_chat_completion(
+        client_for(recorder),
+        model="claude-haiku-5-5",
+        messages=messages,
+        temperature=0.3,
+        max_tokens=None,
+    )
+
+    assert recorder.calls[0]["max_tokens"] == 16000
+    assert "temperature" not in recorder.calls[0]
