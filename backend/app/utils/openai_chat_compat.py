@@ -17,6 +17,13 @@ def is_gpt5_family(model: Optional[str]) -> bool:
     return model.strip().lower().startswith("gpt-5")
 
 
+def is_claude_family(model: Optional[str]) -> bool:
+    """Return True for Claude models served via Anthropic's OpenAI-compatible endpoint."""
+    if not model:
+        return False
+    return model.strip().lower().startswith("claude")
+
+
 def create_chat_completion(
     client: Any,
     *,
@@ -31,6 +38,7 @@ def create_chat_completion(
 
     Compatibility strategy:
     - For GPT-5 family, avoid sending temperature by default.
+    - For Claude models, avoid sending temperature (recent models reject values below 1).
     - For token limit, use `max_completion_tokens` on GPT-5, `max_tokens` otherwise.
     - Preserve the legacy request shape for every non-GPT-5 model/provider.
     - Propagate provider errors unchanged instead of guessing from message text.
@@ -45,7 +53,7 @@ def create_chat_completion(
 
     gpt5_family = is_gpt5_family(model)
 
-    if temperature is not None and not gpt5_family:
+    if temperature is not None and not gpt5_family and not is_claude_family(model):
         kwargs["temperature"] = temperature
 
     if max_tokens is not None:

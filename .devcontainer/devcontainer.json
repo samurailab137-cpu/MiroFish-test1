@@ -7,8 +7,8 @@
   "hostRequirements": { "cpus": 2, "memory": "8gb" },
   "secrets": {
     "LLM_API_KEY": { "description": "API key del modello linguistico (qualunque servizio compatibile OpenAI)" },
-    "LLM_BASE_URL": { "description": "Base URL, es. https://api.openai.com/v1 oppure https://dashscope.aliyuncs.com/compatible-mode/v1" },
-    "LLM_MODEL_NAME": { "description": "Nome del modello, es. gpt-4o-mini oppure qwen-plus" },
+    "LLM_BASE_URL": { "description": "Base URL, es. https://api.anthropic.com/v1/ (Claude), https://api.openai.com/v1 oppure https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    "LLM_MODEL_NAME": { "description": "Nome del modello, es. claude-haiku-5-5, claude-sonnet-5-5, gpt-4o-mini oppure qwen-plus" },
     "ZEP_API_KEY": { "description": "API key di Zep Cloud (https://app.getzep.com/)" }
   },
   "containerEnv": {

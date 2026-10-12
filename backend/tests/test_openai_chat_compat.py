@@ -121,3 +121,20 @@ def test_extracts_text_from_supported_content_shapes():
 
     assert extract_chat_completion_text(response) == "first second third"
     assert extract_chat_completion_text(SimpleNamespace(choices=[])) == ""
+
+
+def test_claude_omits_temperature_but_keeps_max_tokens():
+    recorder = CompletionRecorder()
+    messages = [{"role": "user", "content": "hello"}]
+
+    create_chat_completion(
+        client_for(recorder),
+        model="claude-sonnet-5-5",
+        messages=messages,
+        temperature=0.3,
+        max_tokens=456,
+    )
+
+    assert recorder.calls == [
+        {"model": "claude-sonnet-5-5", "messages": messages, "max_tokens": 456}
+    ]
