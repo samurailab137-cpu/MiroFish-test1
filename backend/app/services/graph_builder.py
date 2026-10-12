@@ -63,6 +63,9 @@ class GraphBuilderService:
     图谱构建服务
     负责调用Zep API构建知识图谱
     """
+
+    # Total cap for one Zep batch, as a multiple of the no-progress timeout.
+    BATCH_MAX_WAIT_MULTIPLIER = 6
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
@@ -634,16 +637,31 @@ class GraphBuilderService:
         progress_callback: Optional[Callable] = None,
         timeout: int | None = None,
     ) -> List[str]:
-        """Wait for a Batch API terminal state and validate every item."""
+        """Wait for a Batch API terminal state and validate every item.
+
+        ``timeout`` bounds how long the batch may go without progress, so a
+        large document that Zep is still steadily processing is not failed
+        halfway; ``BATCH_MAX_WAIT_MULTIPLIER`` caps the total wait.
+        """
 
         timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        max_total_wait = timeout * self.BATCH_MAX_WAIT_MULTIPLIER
         start_time = time.time()
+        last_progress_time = start_time
+        last_percent = -1.0
         terminal_states = {"succeeded", "partial", "failed", "invalid", "canceled"}
 
         while True:
-            if time.time() - start_time > timeout:
+            now = time.time()
+            if now - last_progress_time > timeout:
                 raise TimeoutError(
-                    f"Zep batch {submission.batch_id} did not finish within {timeout}s"
+                    f"Zep batch {submission.batch_id} made no progress for {timeout}s"
+                    f" (did not finish within {int(now - start_time)}s)"
+                )
+            if now - start_time > max_total_wait:
+                raise TimeoutError(
+                    f"Zep batch {submission.batch_id} did not finish within "
+                    f"{max_total_wait}s"
                 )
 
             summary = call_zep_read_with_retry(
@@ -653,6 +671,9 @@ class GraphBuilderService:
             status = getattr(summary, "status", None)
             progress = getattr(summary, "progress", None)
             percent = float(getattr(progress, "percent_complete", 0) or 0) / 100
+            if percent > last_percent:
+                last_percent = percent
+                last_progress_time = now
             if progress_callback:
                 completed = int(getattr(progress, "succeeded_items", 0) or 0)
                 progress_callback(

@@ -499,3 +499,45 @@ def test_installed_sdk_serializes_the_batch_325_contract():
         "source_description": "MiroFish source document chunk",
         "type": "graph_episode",
     }
+
+
+def test_batch_wait_keeps_waiting_while_progress_advances(monkeypatch):
+    polls = iter([
+        ("processing", 10),
+        ("processing", 40),
+        ("processing", 70),
+        ("succeeded", 100),
+    ])
+
+    def get(**_kwargs):
+        status, percent = next(polls)
+        return SimpleNamespace(
+            status=status,
+            progress=SimpleNamespace(percent_complete=percent, succeeded_items=0),
+        )
+
+    builder = object.__new__(GraphBuilderService)
+    builder.client = SimpleNamespace(
+        batch=SimpleNamespace(
+            get=get,
+            list_items=lambda **_kwargs: SimpleNamespace(
+                items=[SimpleNamespace(
+                    sequence_index=0,
+                    status="succeeded",
+                    episode_uuid="episode-1",
+                    source_uuid="episode-1",
+                )],
+                next_cursor=None,
+            ),
+        )
+    )
+    # Total elapsed (2.7s) exceeds the 1s timeout, but no gap between
+    # progress updates does.
+    timestamps = iter([0.0, 0.0, 0.9, 1.8, 2.7])
+    monkeypatch.setattr(graph_builder_module.time, "time", lambda: next(timestamps))
+    monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
+
+    assert builder._wait_for_batch(
+        BatchSubmission("batch-1", "operation", [], 1),
+        timeout=1,
+    ) == ["episode-1"]
