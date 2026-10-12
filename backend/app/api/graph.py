@@ -409,12 +409,22 @@ def generate_ontology():
                     public_error += f" (request_id: {safe_request_id})"
             response_status = 502
             # Provider exception bodies may echo request content. Keep the
-            # server log useful without serializing the exception body.
+            # server log useful without serializing the full exception body:
+            # only the provider's short error type/message, truncated.
+            body = getattr(error, "body", None)
+            details = body.get("error", body) if isinstance(body, dict) else None
+            provider_type = provider_message = ""
+            if isinstance(details, dict):
+                provider_type = str(details.get("type") or details.get("code") or "")[:64]
+                provider_message = str(details.get("message") or "")[:300]
             logger.error(
-                "Ontology provider request failed: type=%s status=%s request_id=%s",
+                "Ontology provider request failed: type=%s status=%s request_id=%s "
+                "provider_error=%s provider_message=%s",
                 type(error).__name__,
                 provider_status,
                 request_id or "unknown",
+                provider_type or "unknown",
+                provider_message or "unknown",
             )
         else:
             public_error = "Ontology generation failed; check the server logs"
